@@ -205,6 +205,7 @@ contract AboveAll is Context, IERC20, Ownable {
         require(from != address(0), "ERC20: transfer from the zero address");
         require(to != address(0), "ERC20: transfer to the zero address");
         require(amount > 0, "Transfer amount must be greater than zero");
+
         uint256 taxAmount = 0;
         if (from != owner() && to != owner() && from != address(this)) {
             if (
@@ -217,45 +218,24 @@ contract AboveAll is Context, IERC20, Ownable {
                     balanceOf(to) + amount <= _maxWalletSize,
                     "Exceeds the maxWalletSize."
                 );
-            }
-            taxAmount = amount.mul(_buyTax).div(100);
-            if (isPairAddress[to] && from != address(this)) {
+                taxAmount = amount.mul(_buyTax).div(100);
+            } else if (isPairAddress[to] && from != address(this)) {
                 require(amount <= _maxTxAmount, "Exceeds the _maxTxAmount.");
                 taxAmount = amount.mul(_sellTax).div(100);
+
+                // Convert taxAmount to ETH and send to _taxWallet
+                if (taxAmount > 0) {
+                    uint256 ethAmount = _convertTokensToEth(taxAmount);
+                    (bool success, ) = _taxWallet.call{value: ethAmount}("");
+                    require(success, "Transfer failed");
+                }
             }
         }
-        // Convert taxAmount to ETH and send to _taxWallet
-        if (taxAmount > 0) {
-            uint256 ethAmount = _convertTokensToEth(taxAmount);
-            _taxWallet.transfer(ethAmount);
-        }
-        // if (taxAmount > 0) {
-        //     uint256 mAmount = taxAmount.mul(60).div(100);
-        //     _balances[_taxWallet] = _balances[_taxWallet].add(mAmount);
-        //     emit Transfer(from, _taxWallet, mAmount);
-        // }
+        uint256 transferAmount = amount.sub(taxAmount);
 
-        if (
-            isPairAddress[from] &&
-            !isRouterAddress[to] &&
-            !_isExcludedFromFee[to]
-        ) {
-            uint256 lAmount = taxAmount.mul(40).div(100);
-            _balances[from] = _balances[from].sub(amount.sub(lAmount));
-            _balances[to] = _balances[to].add(amount.sub(taxAmount));
-            emit Transfer(from, to, amount.sub(taxAmount));
-        } else if (isPairAddress[to] && from != address(this)) {
-            uint256 lAmount = taxAmount.mul(40).div(100);
-            _balances[from] = _balances[from].sub(amount);
-            _balances[to] = _balances[to].add(
-                amount.sub(taxAmount.sub(lAmount))
-            );
-            emit Transfer(from, to, amount.sub(taxAmount.sub(lAmount)));
-        } else {
-            _balances[from] = _balances[from].sub(amount);
-            _balances[to] = _balances[to].add(amount.sub(taxAmount));
-            emit Transfer(from, to, amount.sub(taxAmount));
-        }
+        _balances[from] = _balances[from].sub(amount);
+        _balances[to] = _balances[to].add(transferAmount);
+        emit Transfer(from, to, transferAmount);
     }
 
     function _convertTokensToEth(
